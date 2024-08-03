@@ -9,8 +9,7 @@ from unittest import skipIf
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.cache import cache
-from django.conf import settings
-from django.db import connections
+from django.db import connections, DatabaseError
 from django.forms.models import model_to_dict
 from django.shortcuts import redirect
 from django.test import TestCase
@@ -22,7 +21,7 @@ from explorer.app_settings import EXPLORER_TOKEN, EXPLORER_USER_UPLOADS_ENABLED
 from explorer.models import MSG_FAILED_BLACKLIST, Query, QueryFavorite, QueryLog, DatabaseConnection
 from explorer.tests.factories import QueryLogFactory, SimpleQueryFactory
 from explorer.utils import user_can_see_query
-from explorer.ee.db_connections.views import DatabaseConnectionsListView
+from explorer.ee.db_connections.utils import default_db_connection
 
 
 def reload_app_settings():
@@ -345,33 +344,32 @@ class TestQueryDetailView(TestCase):
 
     def test_multiple_connections_integration(self):
         from explorer.app_settings import EXPLORER_CONNECTIONS
-        from explorer.connections import connections
 
         c1_alias = EXPLORER_CONNECTIONS["SQLite"]
-        conn = connections()[c1_alias]
+        conn = DatabaseConnection.objects.get(alias=c1_alias).as_django_connection()
         c = conn.cursor()
         c.execute("CREATE TABLE IF NOT EXISTS animals (name text NOT NULL);")
         c.execute("INSERT INTO animals ( name ) VALUES ('peacock')")
 
         c2_alias = EXPLORER_CONNECTIONS["Another"]
-        conn = connections()[c2_alias]
+        conn = DatabaseConnection.objects.get(alias=c2_alias).as_django_connection()
         c = conn.cursor()
         c.execute("CREATE TABLE IF NOT EXISTS animals (name text NOT NULL);")
         c.execute("INSERT INTO animals ( name ) VALUES ('superchicken')")
 
-        query = SimpleQueryFactory(
-            sql="select name from animals;", connection=c1_alias
+        query1 = SimpleQueryFactory(
+            sql="select name from animals;", database_connection_id=DatabaseConnection.objects.get(alias=c1_alias).id
         )
         resp = self.client.get(
-            reverse("query_detail", kwargs={"query_id": query.id})
+            reverse("query_detail", kwargs={"query_id": query1.id})
         )
         self.assertContains(resp, "peacock")
 
-        query = SimpleQueryFactory(
-            sql="select name from animals;", connection=c2_alias
+        query2 = SimpleQueryFactory(
+            sql="select name from animals;", database_connection_id=DatabaseConnection.objects.get(alias=c2_alias).id
         )
         resp = self.client.get(
-            reverse("query_detail", kwargs={"query_id": query.id})
+            reverse("query_detail", kwargs={"query_id": query2.id})
         )
         self.assertContains(resp, "superchicken")
 
@@ -584,16 +582,15 @@ class TestSQLDownloadViews(TestCase):
 
     def test_sql_download_respects_connection(self):
         from explorer.app_settings import EXPLORER_CONNECTIONS
-        from explorer.connections import connections
 
         c1_alias = EXPLORER_CONNECTIONS["SQLite"]
-        conn = connections()[c1_alias]
+        conn = DatabaseConnection.objects.get(alias=c1_alias).as_django_connection()
         c = conn.cursor()
         c.execute("CREATE TABLE IF NOT EXISTS animals (name text NOT NULL);")
         c.execute("INSERT INTO animals ( name ) VALUES ('peacock')")
 
         c2_alias = EXPLORER_CONNECTIONS["Another"]
-        conn = connections()[c2_alias]
+        conn = DatabaseConnection.objects.get(alias=c2_alias).as_django_connection()
         c = conn.cursor()
         c.execute("CREATE TABLE IF NOT EXISTS animals (name text NOT NULL);")
         c.execute("INSERT INTO animals ( name ) VALUES ('superchicken')")
@@ -602,7 +599,7 @@ class TestSQLDownloadViews(TestCase):
 
         response = self.client.post(
             url,
-            {"sql": "select * from animals;", "connection": c2_alias}
+            {"sql": "select * from animals;", "connection": DatabaseConnection.objects.get(alias=c2_alias).id}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -655,36 +652,30 @@ class TestSchemaView(TestCase):
 
     def test_returns_schema_contents(self):
         resp = self.client.get(
-            reverse("explorer_schema", kwargs={"connection": CONN})
+            reverse("explorer_schema", kwargs={"connection": default_db_connection().id})
         )
         self.assertContains(resp, "explorer_query")
         self.assertTemplateUsed(resp, "explorer/schema.html")
 
+    def test_returns_schema_contents_json(self):
+        resp = self.client.get(
+            reverse("explorer_schema_json", kwargs={"connection": default_db_connection().id})
+        )
+        self.assertContains(resp, "explorer_query")
+        self.assertEqual(resp.headers["Content-Type"], "application/json")
+
     def test_returns_404_if_conn_doesnt_exist(self):
         resp = self.client.get(
-            reverse("explorer_schema", kwargs={"connection": "foo"})
+            reverse("explorer_schema", kwargs={"connection": "bananas"})
         )
         self.assertEqual(resp.status_code, 404)
 
     def test_admin_required(self):
         self.client.logout()
         resp = self.client.get(
-            reverse("explorer_schema", kwargs={"connection": CONN})
+            reverse("explorer_schema", kwargs={"connection": default_db_connection().alias})
         )
         self.assertTemplateUsed(resp, "admin/login.html")
-
-    @unittest.skipIf(not app_settings.ENABLE_TASKS, "tasks not enabled")
-    @patch("explorer.schema.do_async")
-    def test_builds_async(self, mocked_async_check):
-        mocked_async_check.return_value = True
-        resp = self.client.get(
-            reverse("explorer_schema", kwargs={"connection": CONN})
-        )
-        self.assertTemplateUsed(resp, "explorer/schema_building.html")
-        resp = self.client.get(
-            reverse("explorer_schema", kwargs={"connection": CONN})
-        )
-        self.assertTemplateUsed(resp, "explorer/schema.html")
 
 
 class TestFormat(TestCase):
@@ -906,7 +897,7 @@ class TestQueryFavorite(TestCase):
 class UploadDbViewTest(TestCase):
 
     def setUp(self):
-        DatabaseConnection.objects.all().delete()
+        DatabaseConnection.objects.uploads().delete()
         self.user = User.objects.create_superuser(
             "admin", "admin@admin.com", "pwd"
         )
@@ -949,7 +940,7 @@ class UploadDbViewTest(TestCase):
         conn = DatabaseConnection.objects.filter(alias__contains="kings").first()
         resp = self.client.post(
             reverse("explorer_playground"),
-            {"sql": "select * from kings where Name = 'Athelstan';", "connection": conn.alias}
+            {"sql": "select * from kings where Name = 'Athelstan';", "connection": conn.id}
         )
         self.assertIn("925-940", resp.content.decode("utf-8"))
 
@@ -965,7 +956,7 @@ class UploadDbViewTest(TestCase):
         # Query it and make sure a valid result is in the response. Note this is the *same* connection.
         resp = self.client.post(
             reverse("explorer_playground"),
-            {"sql": "select * from rc_sample where material_type = 'Steel';", "connection": conn.alias}
+            {"sql": "select * from rc_sample where material_type = 'Steel';", "connection": conn.id}
         )
         self.assertIn("Goudurix", resp.content.decode("utf-8"))
 
@@ -1007,35 +998,6 @@ class UploadDbViewTest(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertJSONEqual(response.content, {"error": "File size exceeds the limit of 1.0 MB"})
-
-
-class DatabaseConnectionsListViewTestCase(TestCase):
-
-    def setUp(self):
-        # Setting up the app settings for testing
-        self.original_explorer_connections = settings.EXPLORER_CONNECTIONS
-        settings.EXPLORER_CONNECTIONS = {
-            "default": "default_connection_alias",
-        }
-
-    def tearDown(self):
-        # Restore the original app settings
-        settings.EXPLORER_CONNECTIONS = self.original_explorer_connections
-
-    def test_queryset_combines_connections(self):
-        # Create a DatabaseConnection instance
-        db_conn = DatabaseConnection.objects.create(name="Test Connection", alias="test_alias")
-
-        # Instantiate the view and call get_queryset
-        view = DatabaseConnectionsListView()
-        queryset = view.get_queryset()
-
-        # Convert queryset to a list for easy comparison
-        queryset_list = list(queryset)
-
-        # Check if both the created connection and the connections from app settings are in the queryset
-        self.assertIn(db_conn, queryset_list)
-        self.assertTrue(any(conn.alias == "default" for conn in queryset_list))
 
 
 class DatabaseConnectionValidateViewTestCase(TestCase):
@@ -1088,13 +1050,13 @@ class DatabaseConnectionValidateViewTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertJSONEqual(response.content, {"success": True})
 
-    @patch("explorer.ee.db_connections.views.create_django_style_connection")
-    def test_database_connection_error(self, mock_create_connection):
-        from django.db import OperationalError
-        mock_create_connection.side_effect = OperationalError("Connection error")
+    @patch("explorer.ee.db_connections.models.load_backend")
+    def test_database_connection_error(self, mock_load):
+        mock_load.side_effect = DatabaseError("Connection error")
         response = self.client.post(self.url, data=self.valid_data)
         self.assertEqual(response.status_code, 200)
-        self.assertJSONEqual(response.content, {"success": False, "error": "Connection error"})
+        self.assertJSONEqual(response.content, {"success": False,
+                                                "error": "Failed to create explorer connection: Connection error"})
 
 
 # The idea is to render all of these views, to ensure that errors haven't been introduced in the templates

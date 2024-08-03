@@ -17,20 +17,13 @@ DATABASES = {
         "TEST": {
             "NAME": "tmp"
         }
-    },
-    "alt": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": "tmp2",
-        "TEST": {
-            "NAME": "tmp2"
-        }
-    },
+    }
 }
 
 EXPLORER_CONNECTIONS = {
-    "SQLite": "default",
-    "Another": "alt",
+    "Primary": "default",
 }
+
 EXPLORER_DEFAULT_CONNECTION = "default"
 
 ROOT_URLCONF = "test_project.urls"
@@ -115,3 +108,4 @@ EXPLORER_ASSISTANT_BASE_URL = os.environ.get("AI_BASE_URL")
 EXPLORER_DB_CONNECTIONS_ENABLED = True
 EXPLORER_USER_UPLOADS_ENABLED = True
 EXPLORER_CHARTS_ENABLED = True
+EXPLORER_ASYNC_SCHEMA = True

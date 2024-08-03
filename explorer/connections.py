@@ -1,9 +1,4 @@
-from django.db import connections as djcs
-from django.db import transaction, DEFAULT_DB_ALIAS
 
-from explorer.ee.db_connections.utils import create_django_style_connection
-from explorer import app_settings
-from explorer.models import DatabaseConnection
 
 # To support user-configured database connections that can be managed through the Explorer UI, *as well* as the
 # 'legacy' connections that are configured in Django's normal settings.DATABASES config, we stitch together the two.
@@ -23,40 +18,5 @@ from explorer.models import DatabaseConnection
 
 # The solution is to monkey-patch the get_connection function that transaction.atomic uses, to make it aware of the
 # user-created connections.
-
-
-def new_get_connection(using=None):
-    if using is None:
-        using = DEFAULT_DB_ALIAS
-    if using in djcs:
-        return djcs[using]
-    return create_django_style_connection(DatabaseConnection.objects.get(alias=using))
-
-
-# Monkey patch
-transaction.get_connection = new_get_connection
-
-
-# We export valid SQL connections here so that consuming code never has to
-# deal with django.db.connections directly, and risk accessing a connection
-# that hasn't been registered to Explorer.
-
-# Django insists that connections that are created in a thread are only accessed
-# by that thread, so here we create a dictionary-like collection of the valid
-# connections, but does a 'live' lookup of the connection on each item access.
-class ExplorerConnections(dict):
-
-    def __getitem__(self, item):
-        if item in djcs:
-            return djcs[item]
-        else:
-            return create_django_style_connection(DatabaseConnection.objects.get(alias=item))
-
-
-def connections():
-    _connections = [c for c in djcs if c in app_settings.EXPLORER_CONNECTIONS.values()]
-    db_connections = DatabaseConnection.objects.all()
-    _connections += [c.alias for c in db_connections]
-    return ExplorerConnections(zip(_connections, _connections))
 
 

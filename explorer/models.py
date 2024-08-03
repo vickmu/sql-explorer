@@ -13,9 +13,11 @@ from explorer import app_settings
 from explorer.assistant import models as assistant_models  # noqa
 from explorer.telemetry import Stat, StatNames
 from explorer.utils import (
-    extract_params, get_params_for_url, get_s3_bucket, get_valid_connection, passes_blacklist, s3_url,
+    extract_params, get_params_for_url, get_s3_bucket, passes_blacklist, s3_url,
     shared_dict_update, swap_params,
 )
+from explorer.ee.db_connections.utils import default_db_connection
+
 
 # Issue #618. All models must be imported so that Django understands how to manage migrations for the app
 from explorer.ee.db_connections.models import DatabaseConnection  # noqa
@@ -42,16 +44,7 @@ class Query(models.Model):
         default=False,
         help_text=_("Include in snapshot task (if enabled)")
     )
-    connection = models.CharField(
-        blank=True,
-        max_length=128,
-        default="",
-        help_text=_(
-            "Name of DB connection (as specified in settings) to use for "
-            "this query."
-            "Will use EXPLORER_DEFAULT_CONNECTION if left blank"
-        )
-    )
+    database_connection = models.ForeignKey(to=DatabaseConnection, on_delete=models.SET_NULL, null=True)
 
     def __init__(self, *args, **kwargs):
         self.params = kwargs.get("params")
@@ -102,9 +95,9 @@ class Query(models.Model):
                 error,
                 code="InvalidSql"
             )
-
+        conn = self.database_connection or default_db_connection()
         return QueryResult(
-            self.final_sql(), get_valid_connection(self.connection)
+            self.final_sql(), conn.as_django_connection()
         )
 
     def execute_with_logging(self, executing_user):
@@ -174,7 +167,7 @@ class Query(models.Model):
             sql=self.final_sql(),
             query_id=self.id,
             run_by_user=user,
-            connection=self.connection
+            database_connection=self.database_connection,
         )
         ql.save()
         return ql
@@ -228,7 +221,7 @@ class QueryLog(models.Model):
     )
     run_at = models.DateTimeField(auto_now_add=True)
     duration = models.FloatField(blank=True, null=True)  # milliseconds
-    connection = models.CharField(blank=True, max_length=128, default="")
+    database_connection = models.ForeignKey(to=DatabaseConnection, on_delete=models.SET_NULL, null=True)
     success = models.BooleanField(default=True)
     error = models.TextField(blank=True, null=True)
 
@@ -339,8 +332,10 @@ class QueryResult:
         start_time = time()
 
         try:
+
             with transaction.atomic(self.connection.alias):
                 cursor.execute(self.sql)
+
         except DatabaseError as e:
             cursor.close()
             raise e

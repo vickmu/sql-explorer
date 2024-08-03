@@ -10,9 +10,8 @@ from django.test import TestCase
 from django.utils import timezone
 
 from explorer import app_settings
-from explorer.app_settings import EXPLORER_DEFAULT_CONNECTION as CONN
 from explorer.models import QueryLog
-from explorer.tasks import build_schema_cache_async, execute_query, snapshot_queries, truncate_querylogs, \
+from explorer.tasks import execute_query, snapshot_queries, truncate_querylogs, \
     remove_unused_sqlite_dbs
 from explorer.tests.factories import SimpleQueryFactory
 
@@ -89,14 +88,6 @@ class TestTasks(TestCase):
         truncate_querylogs(30)
         self.assertEqual(QueryLog.objects.count(), 1)
 
-    @unittest.skipIf(not app_settings.ENABLE_TASKS, "tasks not enabled")
-    @patch("explorer.schema.build_schema_info")
-    def test_build_schema_cache_async(self, mocked_build):
-        mocked_build.return_value = [("table", [("column", "Integer")]),]
-        schema = build_schema_cache_async(CONN)
-        assert mocked_build.called
-        self.assertEqual(schema, [("table", [("column", "Integer")]),])
-
 
 class RemoveUnusedSQLiteDBsTestCase(TestCase):
 
@@ -119,8 +110,10 @@ class RemoveUnusedSQLiteDBsTestCase(TestCase):
                 db1.local_name = temp_db_path
                 db1.alias = "test_alias1"
                 db1.host = "some_host"
+                db1.engine = "django.db.backends.sqlite3"
+                db1.id = 3
 
-                MockDatabaseConnection.objects.filter.return_value = [db1]
+                MockDatabaseConnection.objects.uploads.return_value = [db1]
 
                 recent_time = datetime.now() - timedelta(days=days_inactivity + 1)
                 query_log1 = MagicMock()
@@ -130,7 +123,7 @@ class RemoveUnusedSQLiteDBsTestCase(TestCase):
                 mock_queryset.first.return_value = query_log1
 
                 def filter_side_effect(*args, **kwargs):
-                    if kwargs.get("connection") == "test_alias1":
+                    if kwargs.get("database_connection") == 3:  # noqa: PLR2004
                         return mock_queryset
                     return MagicMock(first=MagicMock(return_value=None))
 
@@ -138,8 +131,6 @@ class RemoveUnusedSQLiteDBsTestCase(TestCase):
 
                 # Call the function
                 remove_unused_sqlite_dbs()
-
-                # Assertions
                 self.assertFalse(os.path.exists(temp_db_path))
 
     @patch("explorer.tasks.QueryLog")
@@ -148,7 +139,7 @@ class RemoveUnusedSQLiteDBsTestCase(TestCase):
         days_inactivity = 30
         with patch("explorer.tasks.app_settings.EXPLORER_PRUNE_LOCAL_UPLOAD_COPY_DAYS_INACTIVITY", days_inactivity):
             with tempfile.TemporaryDirectory() as temp_dir:
-
+                # Create a temporary SQLite file
                 temp_db_path = os.path.join(temp_dir, "test_db1.sqlite")
 
                 with open(temp_db_path, "w") as temp_db:
@@ -159,8 +150,10 @@ class RemoveUnusedSQLiteDBsTestCase(TestCase):
                 db1.local_name = temp_db_path
                 db1.alias = "test_alias1"
                 db1.host = "some_host"
+                db1.engine = "django.db.backends.sqlite3"
+                db1.id = 3
 
-                MockDatabaseConnection.objects.filter.return_value = [db1]
+                MockDatabaseConnection.objects.uploads.return_value = [db1]
 
                 recent_time = datetime.now() - timedelta(days=days_inactivity - 1)
                 query_log1 = MagicMock()
@@ -170,7 +163,7 @@ class RemoveUnusedSQLiteDBsTestCase(TestCase):
                 mock_queryset.first.return_value = query_log1
 
                 def filter_side_effect(*args, **kwargs):
-                    if kwargs.get("connection") == "test_alias1":
+                    if kwargs.get("database_connection") == 3:  # noqa: PLR2004
                         return mock_queryset
                     return MagicMock(first=MagicMock(return_value=None))
 

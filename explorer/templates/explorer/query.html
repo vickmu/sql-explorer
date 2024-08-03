@@ -41,8 +41,8 @@
                 </div>
                 {% if form.connections|length > 1 and can_change %}
                     <div class="mb-3 form-floating">
-                        {{ form.connection }}
-                        <label for="id_connection" class="form-label">{% translate "Connection" %}</label>
+                        {{ form.database_connection }}
+                        <label for="id_database_connection" class="form-label">{% translate "Connection" %}</label>
                     </div>
                 {% else %}
                     {# still need to submit the connection, just hide the UI element #}
