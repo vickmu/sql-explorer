@@ -19,7 +19,7 @@ def run_assistant(request_data, user):
     extra_tables = request_data.get("selected_tables", [])
     included_tables = get_table_names_from_query(sql) + extra_tables
 
-    connection_id = request_data.get("connection")
+    connection_id = request_data.get("connection_id")
     try:
         conn = DatabaseConnection.objects.get(id=connection_id)
     except DatabaseConnection.DoesNotExist:

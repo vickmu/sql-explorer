@@ -16,6 +16,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from explorer import app_settings
+from explorer.forms import QueryForm
 from explorer.app_settings import EXPLORER_DEFAULT_CONNECTION as CONN
 from explorer.app_settings import EXPLORER_TOKEN, EXPLORER_USER_UPLOADS_ENABLED
 from explorer.models import MSG_FAILED_BLACKLIST, Query, QueryFavorite, QueryLog, DatabaseConnection
@@ -598,18 +599,22 @@ class TestSQLDownloadViews(TestCase):
 
         url = reverse("download_sql") + "?format=csv"
 
-        response = self.client.post(
-            url,
-            {"sql": "select * from animals;", "connection": DatabaseConnection.objects.get(alias=c2_alias).id}
-        )
+        form_data = {"sql": "select * from animals;",
+                     "title": "foo",
+                     "database_connection": DatabaseConnection.objects.get(alias=c2_alias).id}
+        form = QueryForm(data=form_data)
+        self.assertTrue(form.is_valid())
+        response = self.client.post(url, form.data)
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "superchicken")
 
     def test_sql_download_csv_with_custom_delim(self):
         url = reverse("download_sql") + "?format=csv&delim=|"
-
-        response = self.client.post(url, {"sql": "select 1,2;"})
+        form_data = {"sql": "select 1,2;", "title": "foo", "database_connection": default_db_connection().id}
+        form = QueryForm(data=form_data)
+        self.assertTrue(form.is_valid())
+        response = self.client.post(url, form.data)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["content-type"], "text/csv")
@@ -674,7 +679,7 @@ class TestSchemaView(TestCase):
     def test_admin_required(self):
         self.client.logout()
         resp = self.client.get(
-            reverse("explorer_schema", kwargs={"connection": default_db_connection().alias})
+            reverse("explorer_schema", kwargs={"connection": default_db_connection().id})
         )
         self.assertTemplateUsed(resp, "admin/login.html")
 
@@ -941,7 +946,7 @@ class UploadDbViewTest(TestCase):
         conn = DatabaseConnection.objects.filter(alias__contains="kings").first()
         resp = self.client.post(
             reverse("explorer_playground"),
-            {"sql": "select * from kings where Name = 'Athelstan';", "connection": conn.id}
+            {"sql": "select * from kings where Name = 'Athelstan';", "database_connection": conn.id}
         )
         self.assertIn("925-940", resp.content.decode("utf-8"))
 
@@ -957,7 +962,7 @@ class UploadDbViewTest(TestCase):
         # Query it and make sure a valid result is in the response. Note this is the *same* connection.
         resp = self.client.post(
             reverse("explorer_playground"),
-            {"sql": "select * from rc_sample where material_type = 'Steel';", "connection": conn.id}
+            {"sql": "select * from rc_sample where material_type = 'Steel';", "database_connection": conn.id}
         )
         self.assertIn("Goudurix", resp.content.decode("utf-8"))
 

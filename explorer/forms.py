@@ -1,9 +1,11 @@
 from django.forms import BooleanField, CharField, ModelForm, ValidationError
 from django.forms.widgets import CheckboxInput, Select
+from django.db.models import Value, IntegerField, When, Case
 
 from explorer.app_settings import EXPLORER_DEFAULT_CONNECTION
 from explorer.models import MSG_FAILED_BLACKLIST, Query
 from explorer.ee.db_connections.models import DatabaseConnection
+from explorer.ee.db_connections.utils import default_db_connection_id
 
 
 class SqlField(CharField):
@@ -64,7 +66,15 @@ class QueryForm(ModelForm):
 
     @property
     def connections(self):
-        return [(c.id, c.alias) for c in DatabaseConnection.objects.all()]
+        # Ensure the default connection appears first in the dropdown in the form
+        result = DatabaseConnection.objects.annotate(
+            custom_order=Case(
+                When(id=default_db_connection_id(), then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        ).order_by("custom_order", "id")
+        return [(c.id, c.alias) for c in result.all()]
 
     class Meta:
         model = Query

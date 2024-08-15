@@ -22,7 +22,7 @@ class DownloadFromSqlView(PermissionRequiredMixin, View):
 
     def post(self, request, *args, **kwargs):
         sql = request.POST.get("sql", "")
-        connection = request.POST.get("connection", default_db_connection_id())
+        connection = request.POST.get("database_connection", default_db_connection_id())
         query = Query(sql=sql, database_connection_id=connection, title="")
         ql = query.log(request.user)
         query.title = f"Playground-{ql.id}"

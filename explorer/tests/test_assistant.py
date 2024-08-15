@@ -26,7 +26,7 @@ class TestAssistantViews(TestCase):
         self.client.login(username="admin", password="pwd")
         self.request_data = {
            "sql": "SELECT * FROM explorer_query",
-           "connection": 1,
+           "connection_id": 1,
            "assistant_request": "Test Request"
         }
 

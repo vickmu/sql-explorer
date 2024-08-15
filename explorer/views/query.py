@@ -35,7 +35,7 @@ class PlayQueryView(PermissionRequiredMixin, ExplorerContextMixin, View):
         return self.render()
 
     def post(self, request):
-        c = request.POST.get("connection", default_db_connection_id())
+        c = request.POST.get("database_connection", default_db_connection_id())
         show = url_get_show(request)
         sql = request.POST.get("sql", "")
 

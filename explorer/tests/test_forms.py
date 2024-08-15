@@ -1,6 +1,7 @@
 from django.db.utils import IntegrityError
 from django.forms.models import model_to_dict
 from django.test import TestCase
+from unittest.mock import patch
 
 from explorer.forms import QueryForm
 from explorer.tests.factories import SimpleQueryFactory
@@ -50,3 +51,11 @@ class QueryFormTestCase(TestCase):
         self.assertEqual(query.database_connection_id, default_db_connection_id())
         self.assertEqual(query.title, form_data["title"])
         self.assertEqual(query.sql, form_data["sql"])
+
+    @patch("explorer.forms.default_db_connection_id")
+    def test_default_connection_first(self, mocked_default_db_connection_id):
+        mocked_default_db_connection_id.return_value = default_db_connection_id()
+        self.assertEqual(default_db_connection_id(), QueryForm().connections[0][0])
+
+        mocked_default_db_connection_id.return_value = 2
+        self.assertEqual(2, QueryForm().connections[0][0])
