@@ -22,6 +22,7 @@ from explorer.models import MSG_FAILED_BLACKLIST, Query, QueryFavorite, QueryLog
 from explorer.tests.factories import QueryLogFactory, SimpleQueryFactory
 from explorer.utils import user_can_see_query
 from explorer.ee.db_connections.utils import default_db_connection
+from explorer.schema import connection_schema_cache_key, connection_schema_json_cache_key
 
 
 def reload_app_settings():
@@ -999,6 +1000,34 @@ class UploadDbViewTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertJSONEqual(response.content, {"error": "File size exceeds the limit of 1.0 MB"})
 
+    @patch("explorer.ee.db_connections.views.parse_to_sqlite")
+    def test_bad_parse_type(self, patched_parse):
+        patched_parse.side_effect = TypeError("didnt work")
+        uploaded_file = SimpleUploadedFile("large_file.csv", ("a"*10).encode(), content_type="text/foo")
+        response = self.client.post(reverse("explorer_upload"), {"file": uploaded_file})
+        self.assertEqual(json.loads(response.content.decode("utf-8"))["error"],
+                         "Error parsing file.")
+
+    def test_bad_parse_mime(self):
+        uploaded_file = SimpleUploadedFile("large_file.foo", ("a" * 10).encode(), content_type="text/foo")
+        response = self.client.post(reverse("explorer_upload"), {"file": uploaded_file})
+        self.assertEqual(json.loads(response.content.decode("utf-8"))["error"],
+                         "File was not csv, json, or sqlite.")
+
+    @patch("explorer.ee.db_connections.views.is_sqlite")
+    def test_cant_append_sqlite_to_file(self, patched_is_sqlite):
+        patched_is_sqlite.return_value = True
+        f = SimpleUploadedFile("large_file.foo", ("a" * 10).encode(), content_type="text/foo")
+        dbc = DatabaseConnection.objects.create(
+            alias="test.db",
+            engine=DatabaseConnection.SQLITE,
+            name="test.db",
+            host="s3_path/test.db"
+        )
+        resp = self.client.post(reverse("explorer_upload"), {"file": f, "append": dbc.id})
+        self.assertEqual(json.loads(resp.content.decode("utf-8"))["error"],
+                         "Can't append a SQLite file to a SQLite file. Only CSV and JSON.")
+
 
 class DatabaseConnectionValidateViewTestCase(TestCase):
 
@@ -1057,6 +1086,52 @@ class DatabaseConnectionValidateViewTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertJSONEqual(response.content, {"success": False,
                                                 "error": "Failed to create explorer connection: Connection error"})
+
+
+class TestDatabaseConnectionRefreshView(TestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_superuser(
+            "admin", "admin@admin.com", "pwd"
+        )
+        self.client.login(username="admin", password="pwd")
+        self.dbc = DatabaseConnection.objects.create(
+            alias="test_alias",
+            engine="django.db.backends.sqlite3",
+            name="test.db",
+            host="foo"
+        )
+        self.k = connection_schema_cache_key(self.dbc.id)
+        self.kj = connection_schema_json_cache_key(self.dbc.id)
+        cache.set(self.k, "foo")
+        cache.set(self.kj, "foo")
+
+    def test_refresh_connection(self):
+        # Create a file on disk
+        with open(self.dbc.local_name, "w") as f:
+            f.write("test data")
+
+        # Ensure the file exists
+        self.assertTrue(os.path.exists(self.dbc.local_name))
+
+        # Make a GET call to refresh the connection
+        url = reverse("explorer_connection_refresh", args=[self.dbc.id])
+        response = self.client.get(url)
+
+        # Assert the response is successful
+        self.assertEqual(response.status_code, 200)
+
+        # Assert that the file has been deleted
+        self.assertFalse(os.path.exists(self.dbc.local_name))
+
+        # Assert that the cache keys are clear
+        self.assertIsNone(cache.get(self.k))
+        self.assertIsNone(cache.get(self.kj))
+
+    def tearDown(self):
+        # Clean up any files that might have been created
+        if os.path.exists(self.dbc.local_name):
+            os.remove(self.dbc.local_name)
 
 
 # The idea is to render all of these views, to ensure that errors haven't been introduced in the templates

@@ -45,7 +45,9 @@ class UploadDbView(PermissionRequiredMixin, View):
 
             # You can't double stramp a triple stamp!
             if append_path and is_sqlite(file):
-                raise TypeError("Can't append a SQLite file to a SQLite file. Only CSV and JSON.")
+                msg = "Can't append a SQLite file to a SQLite file. Only CSV and JSON."
+                logger.error(msg)
+                return JsonResponse({"error": msg}, status=400)
 
             try:
                 f_bytes, f_name = parse_to_sqlite(file, conn, request.user.id)
@@ -139,7 +141,7 @@ class DatabaseConnectionRefreshView(PermissionRequiredMixin, View):
     def get(self, request, pk):  # noqa
         conn = DatabaseConnection.objects.get(id=pk)
         conn.delete_local_sqlite()
-        clear_schema_cache(conn.alias)
+        clear_schema_cache(conn)
         message = f"Deleted schema cache for {conn.alias}. Schema will be regenerated on next use."
         if conn.is_upload:
             message += "\nRemoved local SQLite DB. Will be re-downloaded from S3 on next use."
